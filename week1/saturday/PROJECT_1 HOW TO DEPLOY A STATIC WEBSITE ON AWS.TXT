@@ -1,0 +1,266 @@
+**************************************************
+FUNDAMENTAL SKILLS ON HOW TO HOST A WEBSITE ON AWS
+**************************************************
+===PROBLEM===
+- Assuming developers in your company are done writing all the codes and files of an html static website. 
+- All the files have been stored in a GitHub repositoty and you have been given a script to download this website.
+- As a DevOps engineer, you are responsible for deploying this website on AWS.
+- The company requires high availability and fault tolerance
+
+===THE JUPITER SCRIPT===
+#!/bin/bash
+sudo su
+yum update -y
+yum install -y httpd
+cd /var/www/html
+wget https://github.com/devopsstudygroupadmin/jupiter/archive/refs/heads/main.zip
+unzip main.zip
+cp -r jupiter-main/* /var/www/html/
+rm -rf jupiter-main main.zip
+systemctl enable httpd 
+systemctl start httpd
+
+====================================
+STEP 1: BUILD 3 TIER AWS NETWORK VPC
+====================================
+1. Create 01 VPC: jupiter-vpc
+/**
+* Virtual Private Cloud
+* Virtual space where you can launch your resources.
+* You can perform network segmentation and manage network traffic
+* You launch VPC in an AWS Region (Geographic EREA)
+* A Region can have 1 or more Availability Zone (AZ)
+*	AZ is a datacenter with high availability
+**/
+
+2. Create Internet Gateway: jupiter-internet-gateway
+/**
+* An internet gateway is a VPC component that allows communication between your VPC and the internet.
+* An internet gateway enables resources in your public subnets (such as EC2 instances) to connect to the internet.
+**/
+3. Attach the Internet Gateway jupiter-internet-gateway to the VPC jupiter-vpc
+4. Create 02 public Subnets: jupiter-public-subnet-az1 and jupiter-public-subnet-az2
+/**
+* A subnet is a range of IP addresses in your VPC
+* A subnet must reside in a single Availability Zone
+**/
+5. Create 01 Public Route Table: jupiter-public-route-table
+6. Add Public Route to the Public Route Table jupiter-public-route-table
+# The public route allow the route table to route traffic to the internet
+7. Associate the Public Subnets: jupiter-public-subnet-az1 ; jupiter-public-subnet-az2
+ with the Public Route Table jupiter-public-route-table
+
+8. Create the Private Subnets:
+	jupiter-private-app-subnet-az1
+	jupiter-private-app-subnet-az2
+	jupiter-private-data-subnet-az1
+	jupiter-private-data-subnet-az2
+
+===========================
+STEP 2: CREATE NAT GATEWAYS
+===========================
+/**
+* The Nat Gateway allows the instances in the private App
+* subnets and private Data subnets to access the internet.
+* The Private Route Table is associated with the private subnets
+* and routes traffic to the internet through the nat gateway.
+**/
+
+1. Create NAT Gateway: jupiter-nat-gateway-az1
+2. Create route table: jupiter-private-route-table-az1 
+3. Add a public route to jupiter-private-route-table-az1
+4. Associate the jupiter-private-app-subnet-az1 and jupiter-private-data-subnet-az1
+with the jupiter-private-route-table-az1
+5. Create NAT Gateway: jupiter-nat-gateway-az2
+6. Create route table: jupiter-private-route-table-az2 
+7. Add a public route to jupiter-private-route-table-az2
+8. Associate the jupiter-private-app-subnet-az2 and jupiter-private-data-subnet-az2
+with the jupiter-private-route-table-az2
+
+=============================
+STEP 3: CREATE SECURITY GROUPS
+=============================
+1. Create a security group for the application loadbalancer: jupiter-alb-security-group
+/**
+* Open port 80 (HTTP) for any source on the internet (Source = 0.0.0.0/0)
+* Open port 443 (HTTPS) for any source on the internet (Source = 0.0.0.0/0)
+**/
+2. Create a security group to SSH in your resources: jupiter-ssh-security-group
+/**
+* Open port 22 (SSH) for your IP address (Source = Your IP Address)
+* 
+**/
+3. Create a security group for the Webserver: jupiter-webserver-security-group
+/**
+* Open port 80 (HTTP) for any source on the internet through the application loadbalancer (Source = jupiter-alb-security-group)
+* Open port 443 (HTTPS) for any source on the internet through the application loadbalancer (Source = jupiter-alb-security-group)
+* Open port 22 (SSH) for your IP address (Source = jupiter-ssh-security-group)
+**/
+
+=========================================
+STEP 4: CREATE AN APPLICATION LOAD BALANCER
+=========================================
+1. Launch 01 EC2 instances in Private App Subnet AZ1: jupiter-webserver-az1 
+	VPC : 			jupiter-vpc
+	Subnet:			jupiter-private-app-subnet-az1
+	Security group:		jupiter-webserver-security-group
+	User data:		(Paste the script provided in the instruction here)
+2. Launch 01 EC2 instances in Private App Subnet AZ2: jupiter-webserver-az2 
+	VPC : 			jupiter-vpc
+	Subnet:			jupiter-private-app-subnet-az2
+	Security group:		jupiter-webserver-security-group
+	User data:		(Paste the script provided in the instruction here)
+3. Create 01 target group: jupiter-TG
+4. Create the application load balancer jupiter-alb to route traffic to jupiter-webserver-az1 and jupiter-webserver-az2
+/**
+* Wait for the State to change from Provisioning to Active
+*  Copy the DNS name of the load balancer
+* Open a new web browser tab and paste it
+**/
+
+=============================================
+STEP 5: REGISTER A NEW DOMAIN NAME IN ROUTE 53
+=============================================
+1. Route 53 
+2. Register domain
+	Type you domain to check if it is available: yourdomain
+3. select available domain the hit continue
+4. Contact Details
+	Enable Privacy Protection
+5. Verify & Purchase
+	terms and conditions
+	complete order
+6. Registered domains and verify your domain is there.
+
+====================================
+STEP 6: CREATE A RECORD SET IN ROUTE 53
+====================================
+1. We are using Route 53 to register our Domain name and create a record set.
+Route 53 > Hosted zones > yourdomain > Create record
+	Record name:		www
+	Alias			toggle on
+	Choose endpoint:	Alias to Application and Classic Load Balancer
+	Choose Region:		yourregion
+	Choose load balancer:	jupiter-alb
+	Create Record
+2. To access our website using the domain name
+- select record
+- copy record name
+- open a new web browser tab and paste
+
+=================================================================
+STEP 7: REGISTER FOR A FREE SSL CERTIFICATE IN AWS CERTIFICATE MANAGER
+=================================================================
+1. We will register for a free SSL certificate from AWS Certificate Manager
+AWS Certificate Manager > Certificates > Request certificate > Request public certificate
+	Fully qualified domain name:		yourdomain
+	Add another name to this certificate:	*.yourdomain
+	DNS validation - recommended
+	Request
+View Certificate
+Create records in Route 53
+	yourdomain
+	*.yourdomain
+	Create records
+- Refresh the web browser to validate the status
+2. We will use the SSL certificate to encrypt all communications between
+	our webserver and the web browser
+
+==================================================================
+STEP 8: CREATE AN HTTPS (SSL) LISTENER FOR AN APPLICATION LOAD BALANCER
+==================================================================
+1. We will use the SSL certificate to encrypt all communications between
+	our webserver and the web browser
+
+EC2 > Load Balancers > jupiter-alb > Actions > Add listener
+	Protocol:			HTTPS
+	Default actions:		Forward
+	Target group:			jupiter-TG
+	Default SSL certificate:	From ACM
+					yourdomain
+	Add
+View listeners
+2. For HTTP Listener Change default actions to redirect traffic to HTTPS
+HTTP > Actions > Edit Listener
+	Default actions:		Redirect
+	Protocol:			HTTPS
+	Port:				443
+	Save Changes
+
+3. Verify on the web browser
+https://www.yourdomain
+
+===================================
+STEP 9: CREATE AN AUTO SCALING GROUP
+===================================
+/**
+* We will use Auto Scaling Group to dynamically create our webservers
+* to make our website highly available, scalable, fault-tolerant, and elastic.
+**/
+
+1. Terminate all webservers: jupiter-webserver-az1 and jupiter-webserver-az2
+
+2. Create a launch template
+/**
+* A launch template contain the configurations of our EC2 instance
+* That the auto scaling group will use to launch new EC2 instances
+* In the private APP subnet
+**/
+EC2 instances > Launch Templates > Create launch template
+	name:		jupiter-launch-template
+	description: 	Launch template for Auto Scaling Group
+	Provide guidance to help me set up a template that I can use with EC2 auto Scaling
+	Amazon Linux
+	Amazon Linux 2 AMI
+	64-bit (x86)
+	t2.micro
+	yourkey
+	jupiter-webserver-security-group
+	User data 	(Paste the script provided in the instruction here)
+create launch template
+view launch template
+
+3. Create auto Scaling group
+EC2 > Auto Scaling Group > Create Auto Scaling group
+	name:			jupiter-auto-scaling-group
+	Launch template:	jupiter-launch-template
+	Next
+	jupiter-vpc
+	jupiter-private-app-subnet-az1
+	jupiter-private-app-subnet-az2	
+	Next
+	Attach to an existing load balancer
+	Choose from your load balancer target groups
+	jupiter-TG
+	ELB
+	Enable group metrics collection within CloudWatch
+	Next
+	Group size
+		Desired capacity:	2
+		Minimum capacity:	1
+		Maximum capacity:	4
+	Next
+	Add notification
+	SNS Topic: Create Topic
+	Next
+	Add tags
+		key:	name
+		Value:	jupiter-asg-Webserver
+	Next
+	Create Auto Scaling group
+4. verify that 02 ec2 instances are up and running
+5. verify that your website is available on the internet	
+
+================
+STEP 10: CLEANUP
+================
+
+1. Delete Auto Scaling group
+2. Delete Launch Template
+3. Delete Application load balancer
+4. Delete the target group
+5. Security Groups
+6. Delete the NAT Gateway
+7. Delete VPC
+8. Delete the elastic IP
+9. Delete Record set (delete the A record)
